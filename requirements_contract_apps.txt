@@ -1,0 +1,47 @@
+# IBM TLS Contract Analysis Applications
+# Requirements file for both Web Interface and Chatbot
+
+# Core Framework
+streamlit>=1.28.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+openpyxl>=3.1.0  # For Excel file handling
+xlrd>=2.0.1      # For older Excel formats
+
+# Visualization
+plotly>=5.17.0
+matplotlib>=3.7.0
+
+# PDF Generation (for reports)
+reportlab>=4.0.0
+pypdf2>=3.0.0
+
+# Date/Time handling
+python-dateutil>=2.8.2
+
+# Optional: For enhanced features
+# Uncomment if needed
+
+# For PowerPoint generation
+# python-pptx>=0.6.21
+
+# For advanced NLP in chatbot
+# transformers>=4.30.0
+# torch>=2.0.0
+
+# For database integration
+# sqlalchemy>=2.0.0
+# psycopg2-binary>=2.9.0
+
+# For API integration
+# requests>=2.31.0
+# fastapi>=0.100.0
+
+# For authentication
+# streamlit-authenticator>=0.2.0
+
+# For cloud deployment
+# ibm-cloud-sdk-core>=3.16.0
+# ibm-watson>=7.0.0

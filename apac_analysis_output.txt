@@ -1,0 +1,10 @@
+HWMA APAC CONTRACT ANALYSIS SUMMARY
+================================================================================
+
+Total Contracts: 91255
+Total Revenue: $1,130,255,919.12
+Contracts with Auto Renewal: 1001 (1.10%)
+Contracts with CMSL SLA: 6089 (6.67%)
+Contracts expiring in 6 months: 14824
+Revenue at risk (6 months): $102,542,308.43
+Machines reaching EOS in 12 months: 10245

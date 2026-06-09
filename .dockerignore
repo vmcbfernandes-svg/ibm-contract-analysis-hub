@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+.env
+.git
+.gitignore
+.streamlit
+analysis_output.txt
+*_analysis_output.txt
+*.docx
+*.md
+*.xlsx
+*.xls
