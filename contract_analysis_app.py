@@ -385,7 +385,9 @@ class ContractAnalyzer:
         
         for uploaded_file in uploaded_files:
             try:
-                df = pd.read_excel(uploaded_file, sheet_name='Component Details', header=None)
+                # Read file into BytesIO for better compatibility with Hugging Face Spaces
+                file_bytes = io.BytesIO(uploaded_file.read())
+                df = pd.read_excel(file_bytes, sheet_name='Component Details', header=None)
                 
                 # Column mapping (Excel columns to names)
                 column_mapping = {
@@ -551,12 +553,12 @@ class ContractAnalyzer:
         return opportunities
     
     def analyze_trends(self):
-        """Analyze signing and revenue trends"""
+        """Analyze signing and revenue trends - shows ALL historical data through future"""
         if self.data is None:
             raise ValueError("No contract data loaded for trend analysis")
         
         self.data['Start_YearQuarter'] = (
-            self.data['Service Start Date'].dt.year.astype(str) + '-Q' + 
+            self.data['Service Start Date'].dt.year.astype(str) + '-Q' +
             self.data['Service Start Date'].dt.quarter.astype(str)
         )
         
@@ -566,7 +568,11 @@ class ContractAnalyzer:
         }).reset_index()
         quarterly_signings.columns = ['Quarter', 'Contracts', 'TCV']
         
-        return quarterly_signings.tail(8).to_dict('records')
+        # Sort by quarter to ensure chronological order
+        quarterly_signings = quarterly_signings.sort_values('Quarter')
+        
+        # Return ALL quarters (historical through future) instead of just last 8
+        return quarterly_signings.to_dict('records')
     
     def analyze_service_mix(self):
         """Analyze service distribution"""
@@ -761,9 +767,10 @@ def show_upload_page():
                     status_text.text("✅ Analysis complete!")
                     progress_bar.progress(100)
                     
-                    # Store results
+                    # Store results and analyzer data for chat
                     st.session_state.analysis_results = results
                     st.session_state.uploaded_files = file_info
+                    st.session_state.analyzer_data = analyzer.data
                     
                     # Show summary
                     st.success("Analysis completed successfully!")
@@ -1079,29 +1086,18 @@ class ContractAnalysisBot:
             return self.handle_general(user_input)
     
     def get_analysis_dataframe(self):
-        """Rebuild a dataframe from uploaded files for chat-specific queries"""
-        uploaded_files = st.session_state.get('uploaded_files', [])
-        if not uploaded_files:
-            return None
-        
-        analyzer = ContractAnalyzer()
-        file_paths = []
-        for file_info in uploaded_files:
-            filename = file_info.get('filename')
-            if filename:
-                file_paths.append(Path(filename))
-        
-        valid_paths = [path for path in file_paths if path.exists()]
-        if not valid_paths:
-            return None
-        
-        analyzer.load_excel_files(valid_paths)
-        return analyzer.data
+        """Get the analyzer's dataframe from session state"""
+        # Check if we have a stored analyzer with data
+        if hasattr(st.session_state, 'analyzer_data'):
+            return st.session_state.analyzer_data
+        return None
     
     def is_expiry_question(self, user_input_lower):
         """Detect questions about expiring contracts"""
-        expiry_terms = ['expire', 'expiring', 'expiration', 'ending', 'end date', 'renewal']
-        time_terms = ['next 6 months', '6 months', 'next six months', 'coming months', 'upcoming']
+        expiry_terms = ['expire', 'expiring', 'expiration', 'ending', 'end date', 'renewal', 'end in']
+        time_terms = ['next 6 months', '6 months', 'next six months', 'coming months', 'upcoming',
+                      '2026', '2027', '2028', '2029', '2030', '2031', '2032',
+                      'this year', 'next year', 'in 20']
         return any(term in user_input_lower for term in expiry_terms) and any(term in user_input_lower for term in time_terms)
     
     def is_country_question(self, user_input_lower):
@@ -1111,7 +1107,7 @@ class ContractAnalysisBot:
         return any(term in user_input_lower for term in country_terms) and any(term in user_input_lower for term in ranking_terms)
     
     def handle_expiry_question(self, user_input):
-        """Answer questions about contracts expiring soon"""
+        """Answer questions about contracts expiring soon or in a specific year"""
         data = self.get_analysis_dataframe()
         if data is None or data.empty:
             return {
@@ -1119,47 +1115,76 @@ class ContractAnalysisBot:
                 'message': "I couldn't access the uploaded contract rows needed to answer that question. Please re-upload and analyze the files, then try again."
             }
         
-        if 'Service End Date' not in data.columns or 'Country' not in data.columns:
+        if 'Service End Date' not in data.columns:
             return {
                 'type': 'no_data',
                 'message': "The uploaded data does not include the fields needed to analyze contract expirations."
             }
         
-        today = pd.Timestamp.today().normalize()
-        six_months_out = today + pd.DateOffset(months=6)
-        expiring = data[
-            data['Service End Date'].notna() &
-            (data['Service End Date'] >= today) &
-            (data['Service End Date'] <= six_months_out)
-        ].copy()
+        # Extract year from user input if present
+        import re
+        year_match = re.search(r'\b(202[0-9]|203[0-9])\b', user_input)
+        
+        if year_match:
+            # Year-specific query
+            target_year = int(year_match.group(1))
+            expiring = data[
+                data['Service End Date'].notna() &
+                (data['Service End Date'].dt.year == target_year)
+            ].copy()
+            time_window = f"in {target_year}"
+        else:
+            # Default to next 6 months
+            today = pd.Timestamp.today().normalize()
+            six_months_out = today + pd.DateOffset(months=6)
+            expiring = data[
+                data['Service End Date'].notna() &
+                (data['Service End Date'] >= today) &
+                (data['Service End Date'] <= six_months_out)
+            ].copy()
+            time_window = "in the next 6 months"
         
         if expiring.empty:
             return {
                 'type': 'insight',
-                'message': "No contracts are scheduled to expire in the next 6 months based on the uploaded data."
+                'message': f"No contracts are scheduled to expire {time_window} based on the uploaded data."
             }
         
-        country_summary = (
-            expiring.groupby('Country', dropna=False)
-            .agg(
-                contracts=('Serial Number', 'count'),
-                tcv=('Total Contract Value (USD)', 'sum')
-            )
-            .reset_index()
-            .sort_values(['contracts', 'tcv'], ascending=[False, False])
-        )
+        # Calculate total value
+        total_contracts = len(expiring)
+        total_value = expiring['Total Contract Value (USD)'].sum()
         
-        top_country = country_summary.iloc[0]
+        # Country breakdown if Country column exists
+        country_summary = None
+        if 'Country' in data.columns:
+            country_summary = (
+                expiring.groupby('Country', dropna=False)
+                .agg(
+                    contracts=('Serial Number', 'count'),
+                    tcv=('Total Contract Value (USD)', 'sum')
+                )
+                .reset_index()
+                .sort_values(['tcv', 'contracts'], ascending=[False, False])
+            )
+        
+        # Build response message
+        message = f"📊 **Contracts Expiring {time_window.title()}**\n\n"
+        message += f"- **Total Contracts:** {total_contracts:,}\n"
+        message += f"- **Total Value:** ${total_value:,.2f}\n"
+        
+        if country_summary is not None and not country_summary.empty:
+            top_country = country_summary.iloc[0]
+            message += f"\n**Top Country:** {top_country['Country']} ({int(top_country['contracts'])} contracts, ${top_country['tcv']:,.2f})"
+        
         return {
-            'type': 'country_expiry_summary',
-            'message': f"The country with the highest number of contracts expiring in the next 6 months is {top_country['Country']}.",
+            'type': 'expiry_summary',
+            'message': message,
             'summary': {
-                'country': top_country['Country'],
-                'contracts': int(top_country['contracts']),
-                'tcv': float(top_country['tcv']),
-                'window': 'Next 6 months'
+                'total_contracts': total_contracts,
+                'total_value': float(total_value),
+                'window': time_window
             },
-            'top_countries': country_summary.head(5).to_dict('records')
+            'top_countries': country_summary.head(5).to_dict('records') if country_summary is not None else []
         }
     
     def handle_country_question(self, user_input):
