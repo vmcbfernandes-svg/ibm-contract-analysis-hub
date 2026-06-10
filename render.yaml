@@ -2,6 +2,7 @@ services:
   - type: web
     name: ibm-tls-contract-analysis
     env: python
+    runtime: python-3.11.0
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run contract_analysis_app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
     envVars:
